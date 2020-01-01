@@ -1,73 +1,68 @@
-
-import torchvision
-from PIL import Image
-from torchvision import transforms as T
-import matplotlib.pyplot as plt
-import cv2
-import time
 import torch
-import numpy as np
-model = torchvision.models.detection.maskrcnn_resnet50_fpn(pretrained=True)
-model.eval()
+import torchvision
+import argparse
+import cv2
+import sys
 
-COCO_INSTANCE_CATEGORY_NAMES = [
-    '__background__', 'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus',
-    'train', 'truck', 'boat', 'traffic light', 'fire hydrant', 'N/A', 'stop sign',
-    'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow',
-    'elephant', 'bear', 'zebra', 'giraffe', 'N/A', 'backpack', 'umbrella', 'N/A', 'N/A',
-    'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball',
-    'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket',
-    'bottle', 'N/A', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl',
-    'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza',
-    'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed', 'N/A', 'dining table',
-    'N/A', 'N/A', 'toilet', 'N/A', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone',
-    'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'N/A', 'book',
-    'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
-]
-def get_prediction(img, threshold):
+sys.path.append('./')
+from faster_rcnn_detection_on_vedio import coco_names
+import random
 
-  img = Image.fromarray(np.uint8(img))
-  transform = T.Compose([T.ToTensor()])
-  img = transform(img)
-  model.cuda()
-  img = img.cuda()
-  pred = model([img])
-  print(pred)
+def get_args():
+    parser = argparse.ArgumentParser(description='Pytorch Faster-rcnn Detection')
+    parser.add_argument('--model', default='fasterrcnn_resnet50_fpn', help='model')
+    parser.add_argument('--dataset', default='coco', help='model')
+    parser.add_argument('--score', type=float, default=0.5, help='objectness score threshold')
+    args = parser.parse_args()
 
-  pred_class = [COCO_INSTANCE_CATEGORY_NAMES[i] for i in list((pred[0]['labels']).to("cpu").numpy())]
-  pred_boxes = [[(i[0], i[1]), (i[2], i[3])] for i in list((pred[0]['boxes']).to("cpu").detach().numpy())]
-  pred_score = list((pred[0]['scores']).to("cpu").detach().numpy())
-  pred_t = [pred_score.index(x) for x in pred_score if x > threshold][-1]
-  pred_boxes = pred_boxes[:pred_t+1]
-  pred_class = pred_class[:pred_t+1]
-  return pred_boxes, pred_class
-
-def object_detection_api(img, threshold=0.5, rect_th=12, text_size=15, text_th=3):
-  boxes, pred_cls = get_prediction(img, threshold)
-  # img = cv2.imread(img_path)
-  img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-  for i in range(len(boxes)):
-    cv2.rectangle(img, boxes[i][0], boxes[i][1], color=(0, 255, 0), thickness=rect_th)
-    cv2.putText(img, pred_cls[i], boxes[i][0], cv2.FONT_HERSHEY_SIMPLEX,  text_size, (0, 0, 128), thickness=text_th)
-  return img
-  # plt.figure(figsize=(20, 30))
-  # plt.imshow(img)
-  # plt.xticks([])
-  # plt.yticks([])
-  # plt.show()
+    return args
 
 
-if __name__ == '__main__':
-    cam = cv2.VideoCapture("/home/dqq/下载/mz.mp4")# /home/dqq/下载/mz.mp4
+def random_color():
+    b = random.randint(0, 255)
+    g = random.randint(0, 255)
+    r = random.randint(0, 255)
+    return (b, g, r)
+
+
+def img_detection(src_img): #src_img from cv2.imread()
+    args = get_args()
+    input = []
+    num_classes = 91
+    names = coco_names.names
+    model = torchvision.models.detection.__dict__[args.model](num_classes=num_classes, pretrained=True)
+    model = model.cuda()
+    model.eval()
+    # src_img = cv2.imread(image_path)
+    img = cv2.cvtColor(src_img, cv2.COLOR_BGR2RGB)
+    img_tensor = torch.from_numpy(img / 255.).permute(2, 0, 1).float().cuda()
+    input.append(img_tensor)
+    out = model(input)
+    boxes = out[0]['boxes']
+    labels = out[0]['labels']
+    scores = out[0]['scores']
+    for idx in range(boxes.shape[0]):
+        if scores[idx] >= args.score:
+            x1, y1, x2, y2 = boxes[idx][0], boxes[idx][1], boxes[idx][2], boxes[idx][3]
+            name = names.get(str(labels[idx].item()))
+            cv2.rectangle(src_img, (x1, y1), (x2, y2), random_color(), thickness=2)
+            cv2.putText(src_img, text=name, org=(x1, y1 + 10), fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                        fontScale=1, thickness=2, lineType=cv2.LINE_AA, color=(0, 0, 255))
+    return src_img
+
+def video_detection(video_path): #video_path = 0 means read cv2.VideoCapture(0)
+    cam = cv2.VideoCapture(video_path)  # /home/dqq/下载/mz.mp4
+    print("start...")
     while cam.isOpened():
-        start_time = time.time()
         ret_val, img = cam.read()
-        composite = object_detection_api(img, rect_th=2, text_th=1, text_size=1)
-        print("Time: {:.2f} s / img".format(time.time() - start_time))
+        composite = img_detection(img)
         cv2.namedWindow("detections", 0)  # 0可调大小，注意：窗口名必须imshow里面的一窗口名一直
-        cv2.resizeWindow("detections", 1000, 1000)  # 设置长和宽
-        cv2.imshow("detections", composite,)
+        cv2.resizeWindow("detections", 1906, 1080)  # 设置长和宽
+        cv2.imshow("detections", composite, )
         if cv2.waitKey(1) == 27:
             break  # esc to quit
     cam.release()
     cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    video_detection("/home/dqq/视频/video.mp4")
